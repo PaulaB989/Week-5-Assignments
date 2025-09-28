@@ -1,0 +1,174 @@
+---
+title: "Week 5A - Airline Delays"
+author: "Paula Brown"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## Install and load necessary packages
+
+```{r choose_CRAN_Mirror, echo=TRUE}
+options(repos = c(CRAN = "https://cran.rstudio.com"))
+```
+
+```{r init2, echo=TRUE}
+req_packages <- c("DBI","RMySQL","dplyr","dbplyr","knitr","tidyr", "readr", "stringr","tibble", "rmarkdown", "purrr", "lubridate", "here", "httr2", "RCurl")
+for (pkg in req_packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    message(paste("Installing package:", pkg))
+    install.packages(pkg, dependencies = TRUE)
+  } else {
+    message(paste(pkg, " already installed."))
+  }
+  library(pkg, character.only = TRUE)
+}
+```
+
+## Create datafram for provided Airline Delay image
+```{r airline_delays_df}
+# Create a matrix that mimics the untidy structure
+untidy_data <- data.frame(
+  X = c("ALASKA", "", "", "AM WEST",""),
+  Y = c("on time","delayed","","on time","delayed"),
+  `Los Angeles` = c(497, 62, "", 694, 117),
+  Phoenix = c(221, 12, "", 4840, 415),
+  `San Diego` = c(212, 20, "", 383, 65),
+  `San Francisco` = c(503, 102, "", 320, 129),
+  Seattle = c(1841, 305, "", 201, 61),
+  stringsAsFactors = FALSE
+)
+
+# Rename the first column to blank (like in the image)
+names(untidy_data)[1] <- ""
+```
+## Create CSV file for provided image
+We need a CSV of untidy data so that we can practice tidying and transforming the data with R.
+```{r create_airline_delay_csv}
+# Save the untidy data to a CSV file
+write.csv(untidy_data, here::here("untidy_flight_data.csv"), row.names = FALSE)
+```
+## Read the data from the CSV file
+After creating the CSV containing untidy data, we must read it in R so we can begin tidying and transforming.
+```{r read_airline_delay_csv}
+# Read the CSV
+untidy_delays <- read.csv(here("untidy_flight_data.csv"), na.strings = c("", "NA"))
+## na.strings = c("", "NA")) tells R to treat blanks and NA as missing values
+```
+##Summarize the data in the .csv file
+Let's take a look at the untidy data we created. Check to see that it reflects the data in the "Airline Delay" image from Source: Numbersense, Kaiser Fung, McGraw Hill, 2013
+```{r summary}
+knitr::kable(untidy_delays)
+# kable() = creates a nicely formatted table from a data frame or tibble.
+```
+## Remove NA values
+We only want to see the rows with data - remove/filter out blank/NA rows.
+```{r filter_out_blank_row}
+## Remove rows with all NA values
+untidy_delays <- untidy_delays %>%
+  filter(rowSums(is.na(.)) != ncol(.)) ## Filter to show rows that are NOT "NA"
+```
+
+## Fill in missing airline names
+Associate the airline with the row containing data for the "delayed" status.
+```{r fill_missing_airline_name}
+## Fill missing airline names
+tidy_delays <- untidy_delays %>%
+  tidyr::fill(X, .direction = "down") ##fill() tells R to fill in the column "X" and fill it going in a downward direction.
+```
+
+## Quick Preview to determine next steps
+```{r preview_data}
+tidy_delays
+```
+## Pivot table
+Transform table from wide to long by combining City names into 1 column named "City" and their values in another column named "Delay"
+```{r transform-data}
+## Pivot city columns into long format
+tidy_delays <- tidy_delays %>%
+  pivot_longer(cols = -c(X, Y), names_to = "City", values_to = "Delay")
+```
+## Rename X and Y columns accordingly
+Rename for clarity.
+```{r rename_columns}
+tidy_delays <- tidy_delays %>%
+  rename(Airline = X, Status = Y)
+```
+## View cleaned data
+```{r view_cleaned_data}
+knitr::kable(tidy_delays)
+```
+## Summarize the data
+Based on the overall averages below, we can conclude that both airlines are mostly on time.
+```{r data_summary}
+# Summary statistics
+summary_stats <- tidy_delays %>%
+  group_by(Airline,Status) %>%
+  summarise(Average_Delay = mean(Delay), .groups = "drop")
+
+print(summary_stats)
+```
+## Calculate the percentage of the overall summary
+```{r overall_summary_percent}
+# Summarize total flights per airline and status
+overall_summary <- tidy_delays %>%
+  group_by(Airline, Status) %>%
+  summarise(Total = sum(Delay), .groups = "drop")
+
+# Calculate percentage of each status per airline
+overall_summary <- overall_summary %>%
+  group_by(Airline) %>%
+  mutate(Percentage = round((Total / sum(Total)) * 100, 2))
+```
+```{r print overall-summary-percent}
+print(overall_summary)
+```
+## Summarize the data
+Again, on average both airlines are usually on time and rarely delayed. It appears that there are more flights to Phoenix via AM West airline, and more flights to Seattle via Alaska airline. Overall, it seems AM West is a more popular airline and may have more flights which can skew the averages in its favor. Since we do not know the number of flights for each airline's city we cannot really compare or give a recommendation. Another thing to factor in is how close in approximity is each airport to the destination.
+```{r data_summary}
+# Summary statistics
+summary_stats <- tidy_delays %>%
+  group_by(Airline,Status,City) %>%
+  summarise(Average_Delay = mean(Delay), .groups = "drop")
+
+print(summary_stats)
+```
+## ggplot
+```{r plot}
+library(ggplot2)
+
+# Plot overall percentages
+ggplot(overall_summary, aes(x = Airline, y = Percentage, fill = Status)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Overall Arrival vs Delay Percentages by Airline",
+       y = "Percentage (%)", x = "Airline") +
+  scale_fill_manual(values = c("on time" = "lightblue", "delayed" = "pink")) +
+  theme_minimal()
+
+```
+```{r city_summary_percent}
+## Summarize flights per airline, status, and city
+city_summary <- tidy_delays %>%
+  group_by(Airline, City, Status) %>%
+  summarise(Total = sum(Delay), .groups = "drop")
+
+## Calculate percentage of each status per airline per city
+city_summary <- city_summary %>%
+  group_by(Airline, City) %>%
+  mutate(Percentage = round((Total / sum(Total)) * 100, 2))
+```
+```{r view_city_summary}
+print(city_summary)
+```
+## ggplot
+```{r plot}
+library(ggplot2)
+
+# Plot overall percentages
+ggplot(city_summary, aes(x = City, y = Percentage, fill = Status)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "City Arrival vs Cit Percentages by Airline",
+       y = "Percentage (%)", x = "Airline") +
+  scale_fill_manual(values = c("on time" = "gray", "delayed" ="orange")) +
+  theme_minimal()
+
+```
