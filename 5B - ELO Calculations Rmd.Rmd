@@ -1,0 +1,181 @@
+---
+title: "ELO Calculations"
+author: "Paula Brown"
+date: "`r Sys.Date()`"
+output: html_document
+---
+## Install and load necessary packages
+
+```{r choose_CRAN_Mirror, echo=TRUE}
+options(repos = c(CRAN = "https://cran.rstudio.com"))
+```
+
+```{r init2, echo=TRUE}
+req_packages <- c("DBI","RMySQL","dplyr","dbplyr","knitr","tidyr", "readr", "stringr","tibble", "rmarkdown", "purrr", "lubridate", "here", "httr2", "RCurl")
+for (pkg in req_packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    message(paste("Installing package:", pkg))
+    install.packages(pkg, dependencies = TRUE)
+  } else {
+    message(paste(pkg, " already installed."))
+  }
+  library(pkg, character.only = TRUE)
+}
+```
+```{r init, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+## Check if file exists
+## Read the file
+This step will check if the raw data from the "tournamentinfo.txt" file exists in my GitHub repository and then reads the lines in the file if it does exist. Otherwise, a message "File not found at the specified GitHub URL" is displayed.
+```{r Chess_txt_file}
+url <- "https://raw.githubusercontent.com/PaulaB989/data/main/tournamentinfo.txt"
+if (RCurl::url.exists(url)) {
+  file_lines <- readLines(url)
+} else {
+  stop("File not found at the specified GitHub URL.")
+}
+```
+## Begin formatting the .txt data using regular expressions (regex) - identifying a pattern and returning the strings.
+This is one example of regex use in this project ("^\\s*\\d+\\s\\|")
+```{r begin_format_data}
+#Grab lines that start with a player number and contains chess match data.
+# ^ = start of line
+# \\s* = optional whitespace
+# \\d+ = 1 or more digits (player number)
+# \\s\\| = space followed by a pipe ("|")
+player_lines <- file_lines[str_detect(file_lines, "^\\s*\\d+\\s\\|")]
+
+# Grab lines that start with a state abbreviation and contains player info like pre-rating
+# ^ = start of line
+# \\s* = optional whitespace
+# [A-Z]{2} = 2 capital letters (State abbreviation, i.e. OH, NY, etc...)
+# \\s\\| = space followed by a pipe ("|")
+state_lines  <- file_lines[str_detect(file_lines, "^\\s*[A-Z]{2}\\s\\|")]
+```
+## Get Player-Info
+```{r Get_player_info}
+chessplayer_df <- tibble(
+  name = str_trim(str_sub(player_lines, 8, 38)),
+  points = as.numeric(str_trim(str_sub(player_lines, 42, 44))),
+  opponents = str_extract_all(player_lines, "\\d{1,2}(?=\\|)")
+  # "\\d{1,2}(?=\\|)" = one or two digits followed by pipe character ("|") using a 'lookahead'("(?=\\|)") - what comes after current position.
+)
+```
+## Get Player-State and Pre-Rating-Info
+```{r Get_player_state-pre_rating}
+playerstaterating_df <- tibble(
+  state = str_trim(str_sub(state_lines, 4, 5)),
+  pre_rating = as.numeric(str_extract(state_lines, "(?<=R: )\\s?\\d+"))
+  # "(?<=R: )" = a positive lookbehind (what came before current position). It matches a position in the string that is preceded by the exact text "R: " — but it doesn't include "R: " in the match result.
+  # "\\s?" = optional space ** The 3 digit pre-ratings has an additional space after "R: " without using "\\s?" the pre-rating values for those lines returns "NA".
+  # "\\d+" = matches one or more digits (0–9). The double backslash is used in R to escape the backslash in strings.
+)
+```
+## Combine/Bind Player and State data frames
+```{r Combine_player_state_df}
+chessplayer_df <- bind_cols(chessplayer_df, playerstaterating_df)
+```
+## Calculate Opponent Ratings
+```{r calculate_opponent_ratings}
+# Build lookup table of player number to pre-rating
+player_numbers <- str_extract(player_lines, "^\\s*\\d+")
+rating_lookup <- tibble(
+  number = as.integer(player_numbers),
+  rating = playerstaterating_df$pre_rating
+)
+```
+## Calculate average opponent rating
+```{r average_opponent_rating}
+chessplayer_df <- chessplayer_df %>%
+  mutate(
+    opponent_nums = str_extract_all(player_lines, "\\d{1,2}(?=\\|)"),
+    opponent_ratings = lapply(opponent_nums, function(nums) {
+      nums <- as.integer(nums)
+      mean(rating_lookup$rating[match(nums, rating_lookup$number)], na.rm = TRUE)
+    }),
+    avg_opponent_rating = round(unlist(opponent_ratings), 0)
+  ) %>%
+  select(name, state, points, pre_rating, avg_opponent_rating)
+```
+## Expected Score (formula courtesy of Microsoft Co-Pilot)
+```{r expected_score}
+chessplayer_df <- chessplayer_df %>%
+  mutate(
+    expected_score = round(1 / (1 + 10^((avg_opponent_rating - pre_rating) / 400)), 2),
+    performance_diff = round(points - expected_score, 2)
+  )
+```
+## Top 5 Overperformers
+```{r top_five_overperformers}
+# Top 5 overperformers
+top_overperformers <- chessplayer_df %>%
+  arrange(desc(performance_diff)) %>%
+  slice_head(n = 5)
+top_overperformers
+```
+## Top 5 Underperformers
+```{r top_five_underperformers}
+# Top 5 underperformers
+top_underperformers <- chessplayer_df %>%
+  arrange(performance_diff) %>%
+  slice_head(n = 5)
+top_underperformers
+```
+## Write to CSV
+```{r write_csv}
+write_csv(chessplayer_df, here::here("tournament_results.csv"))
+# "here::here" = helps you build file paths that are robust and reproducible, especially in R projects.
+```
+## Read the .csv file
+```{r read_csv}
+chessplayer_df <- read_csv(here("tournament_results.csv"))
+```
+##Summarize the data in the .csv file
+```{r summary}
+knitr::kable(chessplayer_df)
+# kable() = creates a nicely formatted table from a data frame or tibble.
+```
+
+
+## Connect to DB
+1. Create the "Chess_Tournament" database if it does not exist. 
+2. Safely Disconnect.
+```{r db_connection , echo = TRUE, message = FALSE, warning = FALSE}
+ readRenviron("~/Documents/CUNY SPS- Data 607/Week 2A Assignment/.Renviron")
+databaseconnect <- dbConnect(
+  RMySQL::MySQL(),
+  host     = Sys.getenv("DB3_HOST"),     
+  port     = as.integer(Sys.getenv("DB3_PORT")),                  
+  user     = Sys.getenv("DB3_USER"),
+  password = Sys.getenv("DB3_PASSWORD")
+)
+dbExecute(databaseconnect, "CREATE DATABASE IF NOT EXISTS Chess_Tournament")
+dbDisconnect(databaseconnect)
+```
+## Connect to the new database
+```{r connect_to_newDB}
+readRenviron("~/Documents/CUNY SPS- Data 607/Week 2A Assignment/.Renviron")
+newDB <- dbConnect(
+  RMySQL::MySQL(),
+  dbname   = Sys.getenv("DB3_NAME"),
+  host     = Sys.getenv("DB3_HOST"),     
+  port     = as.integer(Sys.getenv("DB3_PORT")),                  
+  user     = Sys.getenv("DB3_USER"),
+  password = Sys.getenv("DB3_PASSWORD"),
+  client.flag = CLIENT_LOCAL_FILES
+)
+```
+## Import the .csv data into new database table
+```{r write_data_from_csv}
+dbWriteTable(newDB, "tournament_results", chessplayer_df, row.names = FALSE, overwrite = TRUE)
+```
+## Check database table exists
+```{r check_DB_exists}
+dbListTables(newDB)
+```
+## View the data in the database table
+```{r view_DB_Table_Data}
+dbGetQuery(newDB, "SELECT * FROM tournament_results")
+```
