@@ -12,7 +12,7 @@ options(repos = c(CRAN = "https://cran.rstudio.com"))
 ```
 
 ```{r init2, echo=TRUE}
-req_packages <- c("DBI","RMySQL","dplyr","dbplyr","knitr","tidyr", "readr", "stringr","tibble", "rmarkdown", "purrr", "lubridate", "here", "httr2", "RCurl")
+req_packages <- c("DBI","RMySQL","dplyr","dbplyr","knitr","tidyr", "readr", "stringr","tibble", "rmarkdown", "purrr", "lubridate", "here", "httr2", "RCurl","ggplot2")
 for (pkg in req_packages) {
   if (!require(pkg, character.only = TRUE)) {
     message(paste("Installing package:", pkg))
@@ -99,7 +99,7 @@ knitr::kable(tidy_delays)
 ```
 ## Summarize the data
 Based on the overall averages below, we can conclude that both airlines are mostly on time.
-```{r data_summary}
+```{r summary_stat}
 # Summary statistics
 summary_stats <- tidy_delays %>%
   group_by(Airline,Status) %>%
@@ -123,7 +123,7 @@ overall_summary <- overall_summary %>%
 print(overall_summary)
 ```
 ## Summarize the data
-Again, on average both airlines are usually on time and rarely delayed. It appears that there are more flights to Phoenix via AM West airline, and more flights to Seattle via Alaska airline. Overall, it seems AM West is a more popular airline and may have more flights which can skew the averages in its favor. Since we do not know the number of flights for each airline's city we cannot really compare or give a recommendation. Another thing to factor in is how close in approximity is each airport to the destination.
+On average both airlines perform well as they are often on time than and rarely delayed. It appears that there are more flights to Phoenix via AM West airline, and more flights to Seattle via Alaska airline. Overall, it seems AM West is a more popular airline and may have more flights which can skew the averages in its favor. Since we do not know the number of flights for each airline's city we cannot really compare or give a recommendation. Another thing to factor in is how close in proximity each airport is to the destinations.
 ```{r data_summary}
 # Summary statistics
 summary_stats <- tidy_delays %>%
@@ -132,10 +132,8 @@ summary_stats <- tidy_delays %>%
 
 print(summary_stats)
 ```
-## ggplot
-```{r plot}
-library(ggplot2)
-
+## Plot Overall Summary
+```{r overall_summary_plot}
 # Plot overall percentages
 ggplot(overall_summary, aes(x = Airline, y = Percentage, fill = Status)) +
   geom_bar(stat = "identity", position = "dodge") +
@@ -159,14 +157,12 @@ city_summary <- city_summary %>%
 ```{r view_city_summary}
 print(city_summary)
 ```
-## ggplot
-```{r plot}
-library(ggplot2)
-
+## Plot City Summary
+```{r city_summary_plot}
 # Plot overall percentages
 ggplot(city_summary, aes(x = City, y = Percentage, fill = Status)) +
   geom_bar(stat = "identity", position = "dodge") +
-  labs(title = "City Arrival vs Cit Percentages by Airline",
+  labs(title = "City Arrival vs City Percentages by Airline",
        y = "Percentage (%)", x = "Airline") +
   scale_fill_manual(values = c("on time" = "gray", "delayed" ="orange")) +
   theme_minimal()
